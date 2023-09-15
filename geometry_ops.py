@@ -134,15 +134,35 @@ def generate_contours(triangles, z_values):
 
     return contours
 
-def generate_grid_infill(contour, density=20, line_distance=2, rotation_angle=0):
+def rotate_point(p, angle, origin):
+    """
+    Rotate a point counterclockwise by a given angle around a given origin.
+
+    The angle should be given in radians.
+    """
+    ox, oy = origin
+    px, py = p
+
+    qx = ox + np.cos(angle) * (px - ox) - np.sin(angle) * (py - oy)
+    qy = oy + np.sin(angle) * (px - ox) + np.cos(angle) * (py - oy)
+    return qx, qy
+
+
+def generate_grid_infill(contour, density=20, max_line_distance=10, min_line_distance=1, rotation_angle=0):
+    # Ensure density is between 0 and 100
+    density = max(0, min(100, density))
+
+    if density == 0:
+        return []
+
+    # Calculate the adjusted line distance based on the density
+    adjusted_distance = ((100 - density) * max_line_distance + density * min_line_distance) / 100
+
     # Calculate the bounding box for the contour
     min_x = min(pt[0] for seg in contour for pt in seg)
     max_x = max(pt[0] for seg in contour for pt in seg)
     min_y = min(pt[1] for seg in contour for pt in seg)
     max_y = max(pt[1] for seg in contour for pt in seg)
-
-    # Adjust the line distance based on the density
-    adjusted_distance = line_distance / (density / 100)
 
     # Generate grid lines
     vertical_lines = [((x, min_y), (x, max_y)) for x in np.arange(min_x, max_x, adjusted_distance)]
@@ -167,38 +187,72 @@ def generate_grid_infill(contour, density=20, line_distance=2, rotation_angle=0)
 
     return vertical_lines_clipped + horizontal_lines_clipped
 
+# Cohen-Sutherland line clipping
+OUT_LEFT, OUT_RIGHT, OUT_BOTTOM, OUT_TOP = 1, 2, 4, 8
 
-def intersection_of_two_lines(line1, line2):
-    # Lines are defined as ((x1, y1), (x2, y2))
-    (x1, y1), (x2, y2) = line1
-    (x3, y3), (x4, y4) = line2
+def compute_out_code(x, y, xmin, ymin, xmax, ymax):
+    code = 0
+    if x < xmin:
+        code |= OUT_LEFT
+    elif x > xmax:
+        code |= OUT_RIGHT
+    if y < ymin:
+        code |= OUT_BOTTOM
+    elif y > ymax:
+        code |= OUT_TOP
+    return code
 
-    # Compute determinants
-    det = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-    
-    if det == 0:  # Lines are parallel and won't intersect
-        return None
+def clip_line_to_bbox(line, bbox):
+    x0, y0 = line[0]
+    x1, y1 = line[1]
+    xmin, ymin, xmax, ymax = bbox
 
-    # Compute the intersection point using Cramer's rule
-    px = ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / det
-    py = ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / det
-    
-    # Now, we need to check if the intersection point is within the segments
-    if (min(x1, x2) <= px <= max(x1, x2) and
-        min(y1, y2) <= py <= max(y1, y2) and
-        min(x3, x4) <= px <= max(x3, x4) and
-        min(y3, y4) <= py <= max(y3, y4)):
-        return px, py
-    else:
-        return None
+    outcode0 = compute_out_code(x0, y0, xmin, ymin, xmax, ymax)
+    outcode1 = compute_out_code(x1, y1, xmin, ymin, xmax, ymax)
+    accept = False
+
+    while True:
+        if not (outcode0 | outcode1):
+            accept = True
+            break
+        elif outcode0 & outcode1:
+            break
+        else:
+            outcode_out = outcode0 if outcode0 else outcode1
+            if outcode_out & OUT_TOP:
+                x = x0 + (x1 - x0) * (ymax - y0) / (y1 - y0)
+                y = ymax
+            elif outcode_out & OUT_BOTTOM:
+                x = x0 + (x1 - x0) * (ymin - y0) / (y1 - y0)
+                y = ymin
+            elif outcode_out & OUT_RIGHT:
+                y = y0 + (y1 - y0) * (xmax - x0) / (x1 - x0)
+                x = xmax
+            elif outcode_out & OUT_LEFT:
+                y = y0 + (y1 - y0) * (xmin - x0) / (x1 - x0)
+                x = xmin
+
+            if outcode_out == outcode0:
+                x0, y0 = x, y
+                outcode0 = compute_out_code(x0, y0, xmin, ymin, xmax, ymax)
+            else:
+                x1, y1 = x, y
+                outcode1 = compute_out_code(x1, y1, xmin, ymin, xmax, ymax)
+
+    return ((x0, y0), (x1, y1)) if accept else None
+
 
 def clip_lines_to_contour(lines, contour):
+    bbox = (min(pt[0] for seg in contour for pt in seg),
+            min(pt[1] for seg in contour for pt in seg),
+            max(pt[0] for seg in contour for pt in seg),
+            max(pt[1] for seg in contour for pt in seg))
+
     clipped = []
     for line in lines:
-        intersections = [intersection_of_two_lines(line, segment) for segment in contour]
-        valid_points = [point for point in intersections if point is not None]
-        
-        if len(valid_points) == 2:
-            clipped.append(tuple(valid_points))
+        clipped_line = clip_line_to_bbox(line, bbox)
+        if clipped_line:
+            clipped.append(clipped_line)
+
     return clipped
 

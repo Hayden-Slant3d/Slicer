@@ -18,7 +18,7 @@ contours = generate_contours(triangles, z_slices)
 #     for segment in contour:
 #         print(segment)
 
-gcode_list = generate_gcode(contours, infill_density=100)
+gcode_list = generate_gcode(contours, infill_density=0)
 
 with open("output.gcode", "w") as file:
     for line in gcode_list:

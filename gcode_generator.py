@@ -50,7 +50,7 @@ def layer_to_gcode(z, contour, feed_rate=1500, extrusion_rate=0.05):
     return gcode
 
 
-def generate_gcode(contours, infill_density=20):
+def generate_gcode(contours, infill_density=0):
     gcode = generate_gcode_header()
 
     for z, contour in contours.items():
