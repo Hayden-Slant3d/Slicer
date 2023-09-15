@@ -1,0 +1,4 @@
+output.gcode
+*.pyc
+*.stl
+*.gcode
